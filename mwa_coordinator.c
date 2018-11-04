@@ -76,6 +76,7 @@
 /* The chars will be send over the air when there are no pending packets*/
 #define mMaxKeysToReceive_c 32
 
+#define TABLESIZE 5
 /************************************************************************************
 *************************************************************************************
 * Private prototypes
@@ -101,12 +102,19 @@ resultType_t MCPS_NWK_SapHandler (mcpsToNwkMessage_t* pMsg, instanceId_t instanc
 extern void Mac_SetExtendedAddress(uint8_t *pAddr, instanceId_t instanceId);
 
 void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn);
+uint8_t verify_NewOrOldDevice(uint64_t macAddress);
 /************************************************************************************
 *************************************************************************************
 * Private type definitions
 *************************************************************************************
 ************************************************************************************/
-
+typedef struct
+{
+	uint16_t shortAddress;
+	uint64_t longAddress;
+	uint8_t rxOnWhenIdle;
+	uint8_t deviceType;
+}device_table_t;
 
 /************************************************************************************
 *************************************************************************************
@@ -151,6 +159,16 @@ uint8_t message_Conter4[] = {"Counter:4"};
 uint8_t address_message[] = {"Direccion de quien lo envio: 0x"};
 uint8_t LQI_message[] = {"LQI: "};
 uint8_t payload_message[] = {"tamano Payload: "};
+
+device_table_t devices_table[] =
+{
+	{0x0000,0x0000000000000000,0,0},
+	{0x0000,0x0000000000000000,0,0},
+	{0x0000,0x0000000000000000,0,0},
+	{0x0000,0x0000000000000000,0,0}
+};
+
+uint8_t devices_table_counter = 0;
 /************************************************************************************
 *************************************************************************************
 * Public memory declarations
@@ -745,7 +763,8 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
 {
   mlmeMessage_t *pMsg;
   mlmeAssociateRes_t *pAssocRes;
- 
+  uint8_t newDevice = 0;
+
   Serial_Print(interfaceId,"Sending the MLME-Associate Response message to the MAC...", gAllowToBlock_d);
  
   /* Allocate a message for the MLME */
@@ -758,6 +777,10 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
     /* Create the Associate response message data. */
     pAssocRes = &pMsg->msgData.associateRes;
 
+
+    //TODO: verify address of requesting device
+	newDevice = verify_NewOrOldDevice(pMsgIn->msgData.associateInd.deviceAddress);
+
     //TODO: short address assignment
     /* Assign a short address to the device. In this example we simply
        choose 0x0001. Though, all devices and coordinators in a PAN must have
@@ -767,7 +790,12 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
     if(pMsgIn->msgData.associateInd.capabilityInfo & gCapInfoAllocAddr_c)
     {
       /* Assign a unique short address less than 0xfffe if the device requests so. */
-      pAssocRes->assocShortAddress = 0x0001;
+//      pAssocRes->assocShortAddress = 0x0001;
+
+    	if(1 == newDevice)
+    	{
+    		pAssocRes->assocShortAddress = devices_table_counter+1;
+    	}
     }
     else
     {
@@ -783,8 +811,21 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
     pAssocRes->securityLevel = gMacSecurityNone_c;
 
     /* Save device info. */
-    FLib_MemCpy(&mDeviceShortAddress, &pAssocRes->assocShortAddress, 2);
-    FLib_MemCpy(&mDeviceLongAddress,  &pAssocRes->deviceAddress,     8);
+	FLib_MemCpy(&mDeviceShortAddress, &pAssocRes->assocShortAddress, 2);
+	FLib_MemCpy(&mDeviceLongAddress,  &pAssocRes->deviceAddress,     8);
+
+    //TODO: devices table filling
+    if(1 == newDevice && devices_table_counter<5)
+    {
+    	newDevice = 0;
+
+    	devices_table[devices_table_counter].shortAddress = pAssocRes->assocShortAddress;
+    	devices_table[devices_table_counter].longAddress = pAssocRes->deviceAddress;
+    	devices_table[devices_table_counter].rxOnWhenIdle = (pMsgIn->msgData.associateInd.capabilityInfo & gCapInfoRxWhenIdle_c)>>3;
+    	devices_table[devices_table_counter].deviceType = (pMsgIn->msgData.associateInd.capabilityInfo & gCapInfoDeviceFfd_c)>>1;
+
+		devices_table_counter++;
+    }
     
     /* Send the Associate Response to the MLME. */
     if( gSuccess_c == NWK_MLME_SapHandler( pMsg, macInstance ) )
@@ -1040,7 +1081,10 @@ resultType_t MCPS_NWK_SapHandler (mcpsToNwkMessage_t* pMsg, instanceId_t instanc
 }
 
 
-
+/******************************************************************************
+* Practice function: checks received message, prints information, changes
+* LED status
+******************************************************************************/
 void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn) {
 	Serial_SyncWrite(interfaceId, enter_string, 1);
 	Serial_SyncWrite(interfaceId, address_message, 31);
@@ -1077,4 +1121,22 @@ void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn) {
 		LED_StopFlashingAllLeds();
 		Led_TurnOn(LED4);
 	}
+}
+
+/******************************************************************************
+* Practice function: checks if the exteded address of the requesting device
+* was previously stored within the devices table
+******************************************************************************/
+uint8_t verify_NewOrOldDevice(uint64_t macAddress)
+{
+	uint8_t newDevice = 1;
+	for(uint8_t tableExplorer = 0;tableExplorer<TABLESIZE;tableExplorer++)
+	{
+		if(devices_table[tableExplorer].longAddress == macAddress)
+		{
+			newDevice = 0;
+			break;
+		}
+	}
+	return newDevice;
 }
