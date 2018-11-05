@@ -102,7 +102,7 @@ resultType_t MCPS_NWK_SapHandler (mcpsToNwkMessage_t* pMsg, instanceId_t instanc
 extern void Mac_SetExtendedAddress(uint8_t *pAddr, instanceId_t instanceId);
 
 void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn);
-uint8_t verify_NewOrOldDevice(uint64_t macAddress);
+uint8_t explore_deviceTable(uint64_t MAC_address, uint8_t * deviceFoundIndex);
 /************************************************************************************
 *************************************************************************************
 * Private type definitions
@@ -780,7 +780,8 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
 
 
     //TODO: verify address of requesting device
-	newDevice = verify_NewOrOldDevice(pMsgIn->msgData.associateInd.deviceAddress);
+	uint8_t foundIndex = 0;
+	newDevice = explore_deviceTable(pMsgIn->msgData.associateInd.deviceAddress,&foundIndex);
 
     //TODO: short address assignment
     /* Assign a short address to the device. In this example we simply
@@ -796,6 +797,10 @@ static uint8_t App_SendAssociateResponse(nwkMessage_t *pMsgIn, uint8_t appInstan
     	if(1 == newDevice)
     	{
     		pAssocRes->assocShortAddress = devices_table_counter+1;
+    	}
+    	else
+    	{
+    		pAssocRes->assocShortAddress = devices_table[foundIndex].shortAddress;
     	}
     }
     else
@@ -887,6 +892,8 @@ static uint8_t App_HandleMlmeInput(nwkMessage_t *pMsg, uint8_t appInstance)
 ******************************************************************************/
 static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
 {
+  uint8_t deviceFound = 1;
+
   switch(pMsgIn->msgType)
   {
     /* The MCPS-Data confirm is sent by the MAC to the network
@@ -901,6 +908,54 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
        or application layer when data has been received. We simply
        copy the received data to the UART. */
     Serial_SyncWrite( interfaceId,pMsgIn->msgData.dataInd.pMsdu, pMsgIn->msgData.dataInd.msduLength );
+    /* Send message */
+      nwkToMcpsMessage_t *mpPacket = NULL;
+    	if(mpPacket == NULL)
+    	{
+    		/* If the maximum number of pending data buffes is below maximum limit
+    		and we do not have a data buffer already then allocate one. */
+    		mpPacket = MSG_Alloc(sizeof(nwkToMcpsMessage_t) + gMaxPHYPacketSize_c);
+    	}
+
+    	if(mpPacket != NULL)
+    	{
+    		mpPacket->msgData.dataReq.pMsdu = (uint8_t *)"APP_ACK\0";
+
+    		/* Data is available in the SerialManager's receive buffer. Now create an
+    		MCPS-Data Request message containing the data. */
+    		mpPacket->msgType = gMcpsDataReq_c;
+    		/* Create the header using device information stored when creating
+    		the association response. In this simple example the use of short
+    		addresses is hardcoded. In a real world application we must be
+    		flexible, and use the address mode required by the given situation. */
+    		FLib_MemCpy(&mpPacket->msgData.dataReq.dstAddr, (void*)&mDeviceShortAddress, 2);
+    		FLib_MemCpy(&mpPacket->msgData.dataReq.srcAddr, (void*)&mShortAddress, 2);
+    		FLib_MemCpy(&mpPacket->msgData.dataReq.dstPanId, (void*)&mPanId, 2);
+    		FLib_MemCpy(&mpPacket->msgData.dataReq.srcPanId, (void*)&mPanId, 2);
+    		mpPacket->msgData.dataReq.dstAddrMode = gAddrModeShortAddress_c;
+    		mpPacket->msgData.dataReq.srcAddrMode = gAddrModeShortAddress_c;
+    		mpPacket->msgData.dataReq.msduLength = 8;
+
+    		/* Create the header using coordinator information gained during
+    		the scan procedure. Also use the short address we were assigned
+    		by the coordinator during association. */
+    //		mpPacket->msgData.dataReq.dstAddrMode = pMsgIn->msgData.dataInd.srcAddr;
+    //		mpPacket->msgData.dataReq.srcAddrMode = mDefaultValueOfShortAddress_c;
+    //		mpPacket->msgData.dataReq.msduLength = 10;
+    		/* Request MAC level acknowledgement of the data packet */
+    		mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
+    		/* Give the data packet a handle. The handle is
+    		returned in the MCPS-Data Confirm message. */
+    		mpPacket->msgData.dataReq.msduHandle = mMsduHandle++;
+    		/* Don't use security*/
+    		mpPacket->msgData.dataReq.securityLevel = gMacSecurityNone_c;
+
+    		NWK_MCPS_SapHandler(mpPacket, macInstance);
+
+    		/* Prepare for another data buffer */
+    		mpPacket = NULL;
+    		mcPendingPackets++;
+    	}
     break;
     
   default:
@@ -909,6 +964,58 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
 
   //TODO: reception validation
   print_counterMessageInfo(pMsgIn);
+
+  uint8_t foundIndex = 0;
+  deviceFound = explore_deviceTable(pMsgIn->msgData.dataInd.srcAddr,&foundIndex);
+
+//  /* Send message */
+//  nwkToMcpsMessage_t *mpPacket = NULL;
+//	if(mpPacket == NULL)
+//	{
+//		/* If the maximum number of pending data buffes is below maximum limit
+//		and we do not have a data buffer already then allocate one. */
+//		mpPacket = MSG_Alloc(sizeof(nwkToMcpsMessage_t) + gMaxPHYPacketSize_c);
+//	}
+//
+//	if(mpPacket != NULL)
+//	{
+//		mpPacket->msgData.dataReq.pMsdu = (uint8_t *)"APP_ACK\0";
+//
+//		/* Data is available in the SerialManager's receive buffer. Now create an
+//		MCPS-Data Request message containing the data. */
+//		mpPacket->msgType = gMcpsDataReq_c;
+//		/* Create the header using device information stored when creating
+//		the association response. In this simple example the use of short
+//		addresses is hardcoded. In a real world application we must be
+//		flexible, and use the address mode required by the given situation. */
+//		FLib_MemCpy(&mpPacket->msgData.dataReq.dstAddr, (void*)&mDeviceShortAddress, 2);
+//		FLib_MemCpy(&mpPacket->msgData.dataReq.srcAddr, (void*)&mShortAddress, 2);
+//		FLib_MemCpy(&mpPacket->msgData.dataReq.dstPanId, (void*)&mPanId, 2);
+//		FLib_MemCpy(&mpPacket->msgData.dataReq.srcPanId, (void*)&mPanId, 2);
+//		mpPacket->msgData.dataReq.dstAddrMode = gAddrModeShortAddress_c;
+//		mpPacket->msgData.dataReq.srcAddrMode = gAddrModeShortAddress_c;
+//		mpPacket->msgData.dataReq.msduLength = 8;
+//
+//		/* Create the header using coordinator information gained during
+//		the scan procedure. Also use the short address we were assigned
+//		by the coordinator during association. */
+////		mpPacket->msgData.dataReq.dstAddrMode = pMsgIn->msgData.dataInd.srcAddr;
+////		mpPacket->msgData.dataReq.srcAddrMode = mDefaultValueOfShortAddress_c;
+////		mpPacket->msgData.dataReq.msduLength = 10;
+//		/* Request MAC level acknowledgement of the data packet */
+//		mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
+//		/* Give the data packet a handle. The handle is
+//		returned in the MCPS-Data Confirm message. */
+//		mpPacket->msgData.dataReq.msduHandle = mMsduHandle++;
+//		/* Don't use security*/
+//		mpPacket->msgData.dataReq.securityLevel = gMacSecurityNone_c;
+//
+//		NWK_MCPS_SapHandler(mpPacket, macInstance);
+//
+//		/* Prepare for another data buffer */
+//		mpPacket = NULL;
+//		mcPendingPackets++;
+//	}
 }
 
 /******************************************************************************
@@ -954,6 +1061,7 @@ static uint8_t App_WaitMsg(nwkMessage_t *pMsg, uint8_t msgType)
 static void App_TransmitUartData(void)
 {
     uint16_t count;
+    uint8_t deviceFound = 0;
     
     /* Count bytes receive over the serial interface */
     Serial_RxBufferByteCount(interfaceId, &count);
@@ -1002,8 +1110,37 @@ static void App_TransmitUartData(void)
         mpPacket->msgData.dataReq.msduLength = count;
         /* Request MAC level acknowledgement, and
         indirect transmission of the data packet */
-        mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
-        mpPacket->msgData.dataReq.txOptions |= gMacTxOptionIndirect_c;
+//        mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
+//        mpPacket->msgData.dataReq.txOptions |= gMacTxOptionIndirect_c;
+
+        //TODO: select txMode
+        uint8_t tableExplorer = 0;
+        for(tableExplorer = 0;tableExplorer<TABLESIZE;tableExplorer++)
+        {
+        	if(devices_table[tableExplorer].shortAddress == mDeviceShortAddress)
+        	{
+        		deviceFound = 1;
+        		break;
+        	}
+        }
+
+        if(1 == deviceFound)
+        {
+        	deviceFound = 0;
+        	if(devices_table[tableExplorer].deviceType == 1) //FFD
+        	{
+        		mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
+//            	mpPacket->msgData.dataReq.txOptions = gMacTxOptionGts_c;
+//            	mpPacket->msgData.dataReq.txOptions = gMacTxOptionsNone_c;
+        	}
+        }
+        else //indirect
+        {
+        	mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
+        	mpPacket->msgData.dataReq.txOptions |= gMacTxOptionIndirect_c;
+        }
+
+
         /* Give the data packet a handle. The handle is
         returned in the MCPS-Data Confirm message. */
         mpPacket->msgData.dataReq.msduHandle = mMsduHandle++;
@@ -1087,40 +1224,50 @@ resultType_t MCPS_NWK_SapHandler (mcpsToNwkMessage_t* pMsg, instanceId_t instanc
 * LED status
 ******************************************************************************/
 void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn) {
-	Serial_SyncWrite(interfaceId, enter_string, 1);
-	Serial_SyncWrite(interfaceId, address_message, 31);
-
-	Serial_PrintHex(interfaceId, &(pMsgIn->msgData.dataInd.srcAddr), 1, 0);
-
-	Serial_SyncWrite(interfaceId, enter_string, 1);
-	Serial_SyncWrite(interfaceId, LQI_message, 5);
-	Serial_PrintDec(interfaceId, pMsgIn->msgData.dataInd.mpduLinkQuality);
-
-	Serial_SyncWrite(interfaceId, enter_string, 1);
-	Serial_SyncWrite(interfaceId, payload_message, 16);
-	Serial_PrintDec(interfaceId, pMsgIn->msgData.dataInd.msduLength);
-
-	Serial_SyncWrite(interfaceId, enter_string, 1);
-	Serial_SyncWrite(interfaceId, enter_string, 1);
+	uint8_t correspondingMessage = 0;
 
 	if (0 == strcmp(message_Conter1, pMsgIn->msgData.dataInd.pMsdu)) {
 		LED_StopFlashingAllLeds();
 		Led_TurnOn(LED1);
+		correspondingMessage = 1;
 	}
 
 	else if (0 == strcmp(message_Conter2, pMsgIn->msgData.dataInd.pMsdu)) {
 		LED_StopFlashingAllLeds();
 		Led_TurnOn(LED2);
+		correspondingMessage = 1;
 	}
 
 	else if (0 == strcmp(message_Conter3, pMsgIn->msgData.dataInd.pMsdu)) {
 		LED_StopFlashingAllLeds();
 		Led_TurnOn(LED3);
+		correspondingMessage = 1;
 	}
 
 	else if (0 == strcmp(message_Conter4, pMsgIn->msgData.dataInd.pMsdu)) {
 		LED_StopFlashingAllLeds();
 		Led_TurnOn(LED4);
+		correspondingMessage = 1;
+	}
+
+	if(1 == correspondingMessage)
+	{
+		correspondingMessage = 0;
+		Serial_SyncWrite(interfaceId, enter_string, 1);
+		Serial_SyncWrite(interfaceId, address_message, 31);
+
+		Serial_PrintHex(interfaceId, &(pMsgIn->msgData.dataInd.srcAddr), 1, 0);
+
+		Serial_SyncWrite(interfaceId, enter_string, 1);
+		Serial_SyncWrite(interfaceId, LQI_message, 5);
+		Serial_PrintDec(interfaceId, pMsgIn->msgData.dataInd.mpduLinkQuality);
+
+		Serial_SyncWrite(interfaceId, enter_string, 1);
+		Serial_SyncWrite(interfaceId, payload_message, 16);
+		Serial_PrintDec(interfaceId, pMsgIn->msgData.dataInd.msduLength);
+
+		Serial_SyncWrite(interfaceId, enter_string, 1);
+		Serial_SyncWrite(interfaceId, enter_string, 1);
 	}
 }
 
@@ -1128,14 +1275,15 @@ void print_counterMessageInfo(mcpsToNwkMessage_t *pMsgIn) {
 * Practice function: checks if the exteded address of the requesting device
 * was previously stored within the devices table
 ******************************************************************************/
-uint8_t verify_NewOrOldDevice(uint64_t macAddress)
+uint8_t explore_deviceTable(uint64_t MAC_address, uint8_t * deviceFoundIndex)
 {
 	uint8_t newDevice = 1;
 	for(uint8_t tableExplorer = 0;tableExplorer<TABLESIZE;tableExplorer++)
 	{
-		if(devices_table[tableExplorer].longAddress == macAddress)
+		if(devices_table[tableExplorer].longAddress == MAC_address)
 		{
 			newDevice = 0;
+			*deviceFoundIndex = tableExplorer;
 			break;
 		}
 	}
