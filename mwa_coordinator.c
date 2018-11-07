@@ -892,7 +892,9 @@ static uint8_t App_HandleMlmeInput(nwkMessage_t *pMsg, uint8_t appInstance)
 ******************************************************************************/
 static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
 {
+  uint8_t device_num = 0;
   uint8_t deviceFound = 1;
+  uint8_t tableExplorer = 0;
 
   switch(pMsgIn->msgType)
   {
@@ -904,22 +906,35 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
     break;
 
   case gMcpsDataInd_c:
+	  device_num = 0;
+	  deviceFound = 0;
+//	  deviceFound = explore_deviceTable(pMsgIn->msgData.dataInd.srcAddr,&device_num);
+	  for(tableExplorer = 0;tableExplorer<TABLESIZE;tableExplorer++)
+	  {
+		  if(devices_table[tableExplorer].shortAddress == pMsgIn->msgData.dataInd.srcAddr)
+		  {
+			  deviceFound = 1;
+			  device_num = tableExplorer;
+			  break;
+		  }
+	  }
+
     /* The MCPS-Data indication is sent by the MAC to the network
        or application layer when data has been received. We simply
        copy the received data to the UART. */
     Serial_SyncWrite( interfaceId,pMsgIn->msgData.dataInd.pMsdu, pMsgIn->msgData.dataInd.msduLength );
     /* Send message */
       nwkToMcpsMessage_t *mpPacket = NULL;
-    	if(mpPacket == NULL)
-    	{
-    		/* If the maximum number of pending data buffes is below maximum limit
+      if(mpPacket == NULL)
+      {
+    	  /* If the maximum number of pending data buffes is below maximum limit
     		and we do not have a data buffer already then allocate one. */
-    		mpPacket = MSG_Alloc(sizeof(nwkToMcpsMessage_t) + gMaxPHYPacketSize_c);
-    	}
+    	  mpPacket = MSG_Alloc(sizeof(nwkToMcpsMessage_t) + gMaxPHYPacketSize_c);
+      }
 
     	if(mpPacket != NULL)
     	{
-    		mpPacket->msgData.dataReq.pMsdu = (uint8_t *)"APP_ACK\0";
+    		mpPacket->msgData.dataReq.pMsdu = (uint8_t *)"APP_ACK\r\n\0";
 
     		/* Data is available in the SerialManager's receive buffer. Now create an
     		MCPS-Data Request message containing the data. */
@@ -928,13 +943,13 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
     		the association response. In this simple example the use of short
     		addresses is hardcoded. In a real world application we must be
     		flexible, and use the address mode required by the given situation. */
-    		FLib_MemCpy(&mpPacket->msgData.dataReq.dstAddr, (void*)&mDeviceShortAddress, 2);
+    		FLib_MemCpy(&mpPacket->msgData.dataReq.dstAddr, (void*)&devices_table[device_num].shortAddress, 2);
     		FLib_MemCpy(&mpPacket->msgData.dataReq.srcAddr, (void*)&mShortAddress, 2);
     		FLib_MemCpy(&mpPacket->msgData.dataReq.dstPanId, (void*)&mPanId, 2);
     		FLib_MemCpy(&mpPacket->msgData.dataReq.srcPanId, (void*)&mPanId, 2);
     		mpPacket->msgData.dataReq.dstAddrMode = gAddrModeShortAddress_c;
     		mpPacket->msgData.dataReq.srcAddrMode = gAddrModeShortAddress_c;
-    		mpPacket->msgData.dataReq.msduLength = 8;
+    		mpPacket->msgData.dataReq.msduLength = 10;
 
     		/* Create the header using coordinator information gained during
     		the scan procedure. Also use the short address we were assigned
@@ -950,6 +965,12 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
     		/* Don't use security*/
     		mpPacket->msgData.dataReq.securityLevel = gMacSecurityNone_c;
 
+    		//TODO: pending check stall until poll
+    		if(devices_table[device_num].rxOnWhenIdle == 0)
+			{
+    			mpPacket->msgData.dataReq.txOptions |= gMacTxOptionIndirect_c;
+			}
+
     		NWK_MCPS_SapHandler(mpPacket, macInstance);
 
     		/* Prepare for another data buffer */
@@ -964,58 +985,6 @@ static void App_HandleMcpsInput(mcpsToNwkMessage_t *pMsgIn, uint8_t appInstance)
 
   //TODO: reception validation
   print_counterMessageInfo(pMsgIn);
-
-  uint8_t foundIndex = 0;
-  deviceFound = explore_deviceTable(pMsgIn->msgData.dataInd.srcAddr,&foundIndex);
-
-//  /* Send message */
-//  nwkToMcpsMessage_t *mpPacket = NULL;
-//	if(mpPacket == NULL)
-//	{
-//		/* If the maximum number of pending data buffes is below maximum limit
-//		and we do not have a data buffer already then allocate one. */
-//		mpPacket = MSG_Alloc(sizeof(nwkToMcpsMessage_t) + gMaxPHYPacketSize_c);
-//	}
-//
-//	if(mpPacket != NULL)
-//	{
-//		mpPacket->msgData.dataReq.pMsdu = (uint8_t *)"APP_ACK\0";
-//
-//		/* Data is available in the SerialManager's receive buffer. Now create an
-//		MCPS-Data Request message containing the data. */
-//		mpPacket->msgType = gMcpsDataReq_c;
-//		/* Create the header using device information stored when creating
-//		the association response. In this simple example the use of short
-//		addresses is hardcoded. In a real world application we must be
-//		flexible, and use the address mode required by the given situation. */
-//		FLib_MemCpy(&mpPacket->msgData.dataReq.dstAddr, (void*)&mDeviceShortAddress, 2);
-//		FLib_MemCpy(&mpPacket->msgData.dataReq.srcAddr, (void*)&mShortAddress, 2);
-//		FLib_MemCpy(&mpPacket->msgData.dataReq.dstPanId, (void*)&mPanId, 2);
-//		FLib_MemCpy(&mpPacket->msgData.dataReq.srcPanId, (void*)&mPanId, 2);
-//		mpPacket->msgData.dataReq.dstAddrMode = gAddrModeShortAddress_c;
-//		mpPacket->msgData.dataReq.srcAddrMode = gAddrModeShortAddress_c;
-//		mpPacket->msgData.dataReq.msduLength = 8;
-//
-//		/* Create the header using coordinator information gained during
-//		the scan procedure. Also use the short address we were assigned
-//		by the coordinator during association. */
-////		mpPacket->msgData.dataReq.dstAddrMode = pMsgIn->msgData.dataInd.srcAddr;
-////		mpPacket->msgData.dataReq.srcAddrMode = mDefaultValueOfShortAddress_c;
-////		mpPacket->msgData.dataReq.msduLength = 10;
-//		/* Request MAC level acknowledgement of the data packet */
-//		mpPacket->msgData.dataReq.txOptions = gMacTxOptionsAck_c;
-//		/* Give the data packet a handle. The handle is
-//		returned in the MCPS-Data Confirm message. */
-//		mpPacket->msgData.dataReq.msduHandle = mMsduHandle++;
-//		/* Don't use security*/
-//		mpPacket->msgData.dataReq.securityLevel = gMacSecurityNone_c;
-//
-//		NWK_MCPS_SapHandler(mpPacket, macInstance);
-//
-//		/* Prepare for another data buffer */
-//		mpPacket = NULL;
-//		mcPendingPackets++;
-//	}
 }
 
 /******************************************************************************
